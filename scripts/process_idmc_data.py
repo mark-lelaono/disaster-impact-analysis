@@ -15,14 +15,22 @@ from pathlib import Path
 from datetime import datetime
 
 
-def process_idmc_data(input_file: str, output_file: str, year: int = 2025) -> pd.DataFrame:
+def process_idmc_data(
+    input_file: str,
+    output_file: str,
+    year: int = 2025,
+    months: list = None,
+    season_name: str = None,
+) -> pd.DataFrame:
     """
     Process IDMC displacement data and create summary file.
 
     Args:
         input_file: Path to the input Excel file (idmc_idus.xlsx)
-        output_file: Path to the output Excel file (SummaryDATA_idmc_idus_May2025.xlsx)
+        output_file: Path to the output Excel file
         year: Year to filter data for (default: 2025)
+        months: Optional list of month names to filter (e.g. ['October', 'November', 'December'])
+        season_name: Optional season label for logging (e.g. 'OND')
 
     Returns:
         DataFrame containing the processed summary data
@@ -38,6 +46,13 @@ def process_idmc_data(input_file: str, output_file: str, year: int = 2025) -> pd
     # Filter for the specified year
     df_year = df[df['displacement_date'].dt.year == year].copy()
     print(f"Records for year {year}: {len(df_year)}")
+
+    # Optionally filter to specific season months
+    if months is not None:
+        month_names = df_year['displacement_date'].dt.strftime('%B')
+        df_year = df_year[month_names.isin(months)].copy()
+        label = season_name or ', '.join(months)
+        print(f"Records after filtering for {label}: {len(df_year)}")
 
     # Columns to retain (from original data)
     columns_to_keep = [

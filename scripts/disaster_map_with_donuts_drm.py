@@ -21,17 +21,24 @@ import geopandas as gpd
 import numpy as np
 from pathlib import Path
 from datetime import datetime
+import sys
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
+try:
+    from config import EAST_AFRICA_COUNTRIES, SHAPEFILE_PATH, ICONS_DIR, OUTPUT_DIR
+except ImportError:
+    EAST_AFRICA_COUNTRIES = [
+        "Somalia", "Tanzania", "Ethiopia", "Uganda", "Kenya", "Rwanda",
+        "Burundi", "South Sudan", "Eritrea", "Djibouti", "Sudan"
+    ]
+    SHAPEFILE_PATH = None
+    ICONS_DIR = None
+    OUTPUT_DIR = None
 
 
 # Configuration
 ANALYSIS_PERIOD = "October - December 2025"
 DATA_SOURCES = "IGAD-TAC, ECHO, IOM, UNOCHA, IPC, IFRC, WHO,\nReliefWeb, FEWS NET"
-
-# East Africa countries
-EAST_AFRICA_COUNTRIES = [
-    "Somalia", "Tanzania", "Ethiopia", "Uganda", "Kenya", "Rwanda",
-    "Burundi", "South Sudan", "Eritrea", "Djibouti", "Sudan"
-]
 
 # Disaster type colors for donut charts
 DISASTER_COLORS = {
@@ -744,11 +751,10 @@ def main():
     """Main function to run the visualization."""
     script_dir = Path(__file__).parent
     base_dir = script_dir.parent
-    shapefiles_dir = base_dir / 'shapefiles'
-    icons_dir = base_dir / 'icons'
-    output_dir = base_dir / 'output'
 
-    shapefile_path = shapefiles_dir / 'Administrative0_Boundaries_ICPAC_Countries.shp'
+    shapefile_path = SHAPEFILE_PATH or (base_dir / 'shapefiles' / 'Administrative0_Boundaries_ICPAC_Countries.shp')
+    icons_dir = ICONS_DIR or (base_dir / 'icons')
+    output_dir = OUTPUT_DIR or (base_dir / 'output')
 
     if not shapefile_path.exists():
         print(f"Error: Shapefile not found at {shapefile_path}")

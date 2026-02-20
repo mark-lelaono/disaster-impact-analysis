@@ -162,9 +162,17 @@ def plot_top_events(df: pd.DataFrame, output_dir: Path):
     print(f"Saved: top_10_events.png")
 
 
-def plot_displacement_trend(dff: pd.DataFrame, output_dir: Path):
-    """Plot displacement trends over time."""
+def plot_displacement_trend(dff: pd.DataFrame, output_dir: Path, year: int = 2025, season_cfg: dict = None):
+    """Plot displacement trends over time with optional season highlighting."""
     print("\n--- Displacement Trends Over Time ---")
+
+    # Determine season boundary for color split
+    if season_cfg:
+        first_season_month = min(season_cfg['month_numbers'])
+        season_name = season_cfg['name']
+    else:
+        first_season_month = 10  # default OND
+        season_name = 'OND'
 
     # Ensure datetime format
     dff['displacement_start_date'] = pd.to_datetime(dff['displacement_start_date'])
@@ -183,35 +191,30 @@ def plot_displacement_trend(dff: pd.DataFrame, output_dir: Path):
         how='left'
     )
 
-    # Plot with log scale
-    # Blue: Pre-2025 and Jan-Sep 2025
-    # Red: Oct-Dec 2025 (OND season)
     plt.figure(figsize=(14, 6))
-
-    # Sort by YearMonth
     monthly_trend = monthly_trend.sort_values('YearMonth')
 
-    # Pre-2025 and Jan-Sep 2025 data (blue)
+    # Pre-season data (blue)
     data_blue = monthly_trend[
-        (monthly_trend['Year'] < 2025) |
-        ((monthly_trend['Year'] == 2025) & (monthly_trend['MonthNum'] < 10))
+        (monthly_trend['Year'] < year) |
+        ((monthly_trend['Year'] == year) & (monthly_trend['MonthNum'] < first_season_month))
     ]
     if not data_blue.empty:
         sns.lineplot(data=data_blue, x='YearMonth', y='figure', marker='o', color='blue',
-                    label='Pre-OND 2025', linewidth=2, markersize=6)
+                    label=f'Pre-{season_name} {year}', linewidth=2, markersize=6)
 
-    # Oct-Dec 2025 data (red) - OND season
-    data_2025_ond = monthly_trend[
-        (monthly_trend['Year'] == 2025) & (monthly_trend['MonthNum'] >= 10)
+    # Season data (red)
+    data_season = monthly_trend[
+        (monthly_trend['Year'] == year) & (monthly_trend['MonthNum'] >= first_season_month)
     ]
-    if not data_2025_ond.empty:
-        sns.lineplot(data=data_2025_ond, x='YearMonth', y='figure', marker='o', color='red',
-                    label='OND-2025', linewidth=2, markersize=6)
+    if not data_season.empty:
+        sns.lineplot(data=data_season, x='YearMonth', y='figure', marker='o', color='red',
+                    label=f'{season_name}-{year}', linewidth=2, markersize=6)
 
-    # Connect the last blue point to the first red point with a continuous line
-    if not data_blue.empty and not data_2025_ond.empty:
+    # Connect the last blue point to the first red point
+    if not data_blue.empty and not data_season.empty:
         last_blue = data_blue.iloc[-1]
-        first_red = data_2025_ond.iloc[0]
+        first_red = data_season.iloc[0]
         plt.plot([last_blue['YearMonth'], first_red['YearMonth']],
                 [last_blue['figure'], first_red['figure']],
                 color='blue', linestyle='-', linewidth=2)
@@ -229,9 +232,17 @@ def plot_displacement_trend(dff: pd.DataFrame, output_dir: Path):
     print(f"Saved: displacement_trend_over_time.png")
 
 
-def plot_displacement_trend_2025(dff: pd.DataFrame, output_dir: Path):
-    """Plot displacement trends for 2025 only (Jan-Sep blue, OND red)."""
-    print("\n--- Displacement Trends 2025 Only ---")
+def plot_displacement_trend_2025(dff: pd.DataFrame, output_dir: Path, year: int = 2025, season_cfg: dict = None):
+    """Plot displacement trends for a single year with season highlighting."""
+    print(f"\n--- Displacement Trends {year} Only ---")
+
+    # Determine season boundary
+    if season_cfg:
+        first_season_month = min(season_cfg['month_numbers'])
+        season_name = season_cfg['name']
+    else:
+        first_season_month = 10
+        season_name = 'OND'
 
     # Ensure datetime format
     dff['displacement_start_date'] = pd.to_datetime(dff['displacement_start_date'])
@@ -242,54 +253,53 @@ def plot_displacement_trend_2025(dff: pd.DataFrame, output_dir: Path):
     dff['MonthNum'] = dff['displacement_start_date'].dt.month
     dff['MonthName'] = dff['displacement_start_date'].dt.strftime('%B')
 
-    # Filter for 2025 only
-    dff_2025 = dff[dff['Year'] == 2025].copy()
+    # Filter for the specified year
+    dff_year = dff[dff['Year'] == year].copy()
 
     # Group displacement figures by Year-Month
-    monthly_trend = dff_2025.groupby('YearMonth')['figure'].sum().reset_index()
+    monthly_trend = dff_year.groupby('YearMonth')['figure'].sum().reset_index()
     monthly_trend = monthly_trend[monthly_trend['figure'] > 0]
     monthly_trend = monthly_trend.merge(
-        dff_2025[['YearMonth', 'Year', 'MonthNum', 'MonthName']].drop_duplicates(),
+        dff_year[['YearMonth', 'Year', 'MonthNum', 'MonthName']].drop_duplicates(),
         on='YearMonth',
         how='left'
     )
 
-    # Sort by month
     monthly_trend = monthly_trend.sort_values('MonthNum')
 
-    # Plot - 2025 only
-    # Blue: Jan-Sep, Red: Oct-Dec (OND season)
     plt.figure(figsize=(14, 6))
 
-    # Jan-Sep 2025 data (blue)
-    data_jan_sep = monthly_trend[monthly_trend['MonthNum'] < 10]
-    if not data_jan_sep.empty:
-        sns.lineplot(data=data_jan_sep, x='MonthName', y='figure', marker='o', color='blue', label='Jan-Sep 2025', linewidth=2, markersize=8)
+    # Pre-season data (blue)
+    data_pre = monthly_trend[monthly_trend['MonthNum'] < first_season_month]
+    if not data_pre.empty:
+        sns.lineplot(data=data_pre, x='MonthName', y='figure', marker='o', color='blue',
+                    label=f'Pre-{season_name} {year}', linewidth=2, markersize=8)
 
-    # Oct-Dec 2025 data (red) - OND season
-    data_ond = monthly_trend[monthly_trend['MonthNum'] >= 10]
-    if not data_ond.empty:
-        sns.lineplot(data=data_ond, x='MonthName', y='figure', marker='o', color='red', label='OND 2025', linewidth=2, markersize=8)
+    # Season data (red)
+    data_season = monthly_trend[monthly_trend['MonthNum'] >= first_season_month]
+    if not data_season.empty:
+        sns.lineplot(data=data_season, x='MonthName', y='figure', marker='o', color='red',
+                    label=f'{season_name} {year}', linewidth=2, markersize=8)
 
-    # Connect the last blue point to the first red point with a continuous line
-    if not data_jan_sep.empty and not data_ond.empty:
-        last_jan_sep = data_jan_sep.iloc[-1]
-        first_ond = data_ond.iloc[0]
-        plt.plot([last_jan_sep['MonthName'], first_ond['MonthName']],
-                [last_jan_sep['figure'], first_ond['figure']],
+    # Connect the last blue point to the first red point
+    if not data_pre.empty and not data_season.empty:
+        last_pre = data_pre.iloc[-1]
+        first_season = data_season.iloc[0]
+        plt.plot([last_pre['MonthName'], first_season['MonthName']],
+                [last_pre['figure'], first_season['figure']],
                 color='blue', linestyle='-', linewidth=2)
 
     plt.yscale('log')
     plt.gca().yaxis.set_major_formatter(FuncFormatter(format_number))
-    plt.title("Displacement Trend in Eastern Africa - 2025", fontsize=16)
-    plt.xlabel("2025 Months", fontsize=16)
+    plt.title(f"Displacement Trend in Eastern Africa - {year}", fontsize=16)
+    plt.xlabel(f"{year} Months", fontsize=16)
     plt.ylabel("Number of Displacements", fontsize=16)
     plt.xticks(rotation=45)
     plt.legend(fontsize=14, title='Period', title_fontsize='13')
     plt.tight_layout()
-    plt.savefig(output_dir / 'displacement_trend_2025_only.png', dpi=300, bbox_inches='tight')
+    plt.savefig(output_dir / f'displacement_trend_{year}_only.png', dpi=300, bbox_inches='tight')
     plt.close()
-    print(f"Saved: displacement_trend_2025_only.png")
+    print(f"Saved: displacement_trend_{year}_only.png")
 
 
 def plot_disaster_map_with_donuts(shapefile_path: Path, icons_dir: Path, output_dir: Path):
