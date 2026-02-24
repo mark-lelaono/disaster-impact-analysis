@@ -15,12 +15,7 @@ import seaborn as sns
 import geopandas as gpd
 import numpy as np
 from pathlib import Path
-from datetime import datetime
-from matplotlib.patches import Patch, ConnectionPatch
-from matplotlib.offsetbox import OffsetImage, AnnotationBbox
-import matplotlib.image as mpimg
-from matplotlib.lines import Line2D
-import matplotlib.colors as mcolors
+from matplotlib.patches import Patch
 from matplotlib.ticker import FuncFormatter
 import glob
 
@@ -233,16 +228,23 @@ def plot_displacement_trend(dff: pd.DataFrame, output_dir: Path, year: int = 202
 
 
 def plot_displacement_trend_2025(dff: pd.DataFrame, output_dir: Path, year: int = 2025, season_cfg: dict = None):
-    """Plot displacement trends for a single year with season highlighting."""
+    """Plot displacement trends for a single year showing only Pre-season + season months."""
     print(f"\n--- Displacement Trends {year} Only ---")
 
-    # Determine season boundary
+    # Determine season boundary and which months to include
     if season_cfg:
-        first_season_month = min(season_cfg['month_numbers'])
+        season_months = season_cfg['month_numbers']
+        pre_months = season_cfg.get('pre_month_numbers', [])
+        first_season_month = min(season_months)
         season_name = season_cfg['name']
     else:
+        season_months = [10, 11, 12]
+        pre_months = [7, 8, 9]
         first_season_month = 10
         season_name = 'OND'
+
+    # Only show pre-season + season months
+    allowed_months = sorted(set(pre_months + season_months))
 
     # Ensure datetime format
     dff['displacement_start_date'] = pd.to_datetime(dff['displacement_start_date'])
@@ -253,8 +255,8 @@ def plot_displacement_trend_2025(dff: pd.DataFrame, output_dir: Path, year: int 
     dff['MonthNum'] = dff['displacement_start_date'].dt.month
     dff['MonthName'] = dff['displacement_start_date'].dt.strftime('%B')
 
-    # Filter for the specified year
-    dff_year = dff[dff['Year'] == year].copy()
+    # Filter for the specified year and allowed months only
+    dff_year = dff[(dff['Year'] == year) & (dff['MonthNum'].isin(allowed_months))].copy()
 
     # Group displacement figures by Year-Month
     monthly_trend = dff_year.groupby('YearMonth')['figure'].sum().reset_index()
@@ -302,174 +304,7 @@ def plot_displacement_trend_2025(dff: pd.DataFrame, output_dir: Path, year: int 
     print(f"Saved: displacement_trend_{year}_only.png")
 
 
-def plot_disaster_map_with_donuts(shapefile_path: Path, icons_dir: Path, output_dir: Path):
-    """Plot Eastern Africa disaster map with donut charts."""
-    print("\n--- Disaster Map with Donut Charts ---")
-
-    # Prepare the disaster data (sample data - can be updated with actual data)
-    data = [
-        {"Country": "Somalia", "Disaster Type": "Floods", "Events": 1, "Deaths": 4, "Total Affected": 30000},
-        {"Country": "Tanzania", "Disaster Type": "Floods", "Events": 1, "Deaths": 0, "Total Affected": 2165},
-        {"Country": "Ethiopia", "Disaster Type": "Earthquake", "Events": 1, "Deaths": 0, "Total Affected": 80000},
-        {"Country": "Uganda", "Disaster Type": "Epidemic", "Events": 1, "Deaths": 4, "Total Affected": 0}
-    ]
-
-    df_disaster = pd.DataFrame(data)
-    geo_df = gpd.read_file(shapefile_path)
-
-    east_africa_countries = ["Somalia", "Tanzania", "Ethiopia", "Uganda", "Kenya", "Rwanda",
-                            "Burundi", "South Sudan", "Eritrea", "Djibouti", "Sudan"]
-    geo_df_east_africa = geo_df[geo_df['COUNTRY'].isin(east_africa_countries)]
-
-    merged = geo_df_east_africa.merge(df_disaster, how='left', left_on='COUNTRY', right_on='Country')
-
-    disaster_colors = {
-        "Floods": "blue",
-        "Earthquake": "orange",
-        "Epidemic": "purple",
-        np.nan: "lightgray"
-    }
-    merged['Color'] = merged['Disaster Type'].map(disaster_colors).fillna("lightgray")
-    merged['coords'] = merged['geometry'].representative_point().apply(lambda p: (p.x, p.y))
-
-    # Icon paths
-    icon_paths = {
-        "Floods": icons_dir / "Flood_icon.png",
-        "Earthquake": icons_dir / "Earthquake_icon.png",
-        "Epidemic": icons_dir / "Epidemic_icon.png"
-    }
-
-    def add_icon(ax, x, y, icon_path, zoom=0.5):
-        if icon_path.exists():
-            icon_img = mpimg.imread(str(icon_path))
-            imagebox = OffsetImage(icon_img, zoom=zoom)
-            ab = AnnotationBbox(imagebox, (x, y), frameon=False)
-            ax.add_artist(ab)
-
-    # Create figure
-    fig = plt.figure(figsize=(20, 10))
-    gs = fig.add_gridspec(3, 2, width_ratios=[2, 1], height_ratios=[1, 1, 1])
-    ax_map = fig.add_subplot(gs[:, 0])
-
-    merged.plot(ax=ax_map, color=merged['Color'], edgecolor='black')
-    ax_map.set_title("Disaster Types in East Africa (2025)", fontsize=16)
-    ax_map.axis('off')
-
-    # Add disaster icons
-    for _, row in merged.iterrows():
-        disaster_type = row['Disaster Type']
-        if pd.notna(disaster_type) and disaster_type in icon_paths:
-            x, y = row['coords']
-            add_icon(ax_map, x, y, icon_paths[disaster_type], zoom=0.08)
-
-    # Add legend
-    legend_elements = [
-        Patch(facecolor="blue", label="Floods"),
-        Patch(facecolor="orange", label="Earthquake"),
-        Patch(facecolor="purple", label="Epidemic"),
-        Patch(facecolor="lightgray", label="No Disaster Reported")
-    ]
-    ax_map.legend(handles=legend_elements, title="Disaster Types", loc='lower left', fontsize=13, title_fontsize=14)
-
-    # Donut chart data
-    events_data = df_disaster.groupby('Disaster Type')['Events'].sum()
-    deaths_data = df_disaster.groupby('Disaster Type')['Deaths'].sum()
-    affected_data = df_disaster.groupby('Disaster Type')['Total Affected'].sum()
-
-    total_events = events_data.sum()
-    total_deaths = deaths_data.sum()
-    total_affected = affected_data.sum()
-
-    chart_colors = {"Floods": "blue", "Earthquake": "orange", "Epidemic": "purple"}
-
-    def prepare_donut_data(data, colors_dict):
-        non_zero_data = data[data > 0]
-        total = non_zero_data.sum()
-        labels = [f"{d} ({non_zero_data[d]/total*100:.1f}%)" for d in non_zero_data.index]
-        colors = [colors_dict[d] for d in non_zero_data.index]
-        return non_zero_data, labels, colors
-
-    # Donut Chart 1: Events
-    ax1 = fig.add_axes([0.65, 0.65, 0.2, 0.2])
-    events_non_zero, events_labels, events_colors = prepare_donut_data(events_data, chart_colors)
-    if len(events_non_zero) > 0:
-        ax1.pie(events_non_zero, labels=events_labels, colors=events_colors,
-                startangle=90, wedgeprops=dict(width=0.3), textprops=dict(fontsize=10))
-    ax1.text(0, 0, f'Total Events\n{total_events}', ha='center', va='center', fontsize=12)
-    ax1.set_title("Events by Disaster Type", fontsize=14)
-
-    # Donut Chart 2: Deaths
-    ax2 = fig.add_axes([0.65, 0.35, 0.2, 0.2])
-    deaths_non_zero, deaths_labels, deaths_colors = prepare_donut_data(deaths_data, chart_colors)
-    if len(deaths_non_zero) > 0:
-        ax2.pie(deaths_non_zero, labels=deaths_labels, colors=deaths_colors,
-                startangle=90, wedgeprops=dict(width=0.3), textprops=dict(fontsize=10))
-    ax2.text(0, 0, f'Total Deaths\n{total_deaths}', ha='center', va='center', fontsize=12)
-    ax2.set_title("Deaths by Disaster Type", fontsize=14)
-
-    # Donut Chart 3: Total Affected
-    ax3 = fig.add_axes([0.65, 0.05, 0.2, 0.2])
-    affected_non_zero, affected_labels, affected_colors = prepare_donut_data(affected_data, chart_colors)
-    if len(affected_non_zero) > 0:
-        ax3.pie(affected_non_zero, labels=affected_labels, colors=affected_colors,
-                startangle=90, wedgeprops=dict(width=0.3), textprops=dict(fontsize=10))
-    ax3.text(0, 0, f'Total Affected\n{total_affected}', ha='center', va='center', fontsize=12)
-    ax3.set_title("Total Affected by Disaster Type", fontsize=14)
-
-    plt.tight_layout(pad=2.0)
-    plt.savefig(output_dir / 'eastern_africa_disaster_map_with_donuts.png', dpi=300, bbox_inches='tight')
-    plt.close()
-    print(f"Saved: eastern_africa_disaster_map_with_donuts.png")
-
-
-def main():
-    """Main function to run all analyses."""
-    print("=" * 60)
-    print("IDMC Displacement Analysis")
-    print("=" * 60)
-
-    # Define paths
-    script_dir = Path(__file__).parent
-    base_dir = script_dir.parent
-    input_dir = base_dir / 'Input'
-    output_dir = base_dir / 'output'
-    shapefiles_dir = base_dir / 'shapefiles'
-    icons_dir = base_dir / 'icons'
-
-    shapefile_path = shapefiles_dir / 'Administrative0_Boundaries_ICPAC_Countries.shp'
-
-    # Find and load the latest summary file
-    try:
-        summary_file = get_latest_summary_file(output_dir)
-        df, dff = load_data(summary_file, input_dir)
-    except FileNotFoundError as e:
-        print(f"Error: {e}")
-        print("Please run process_idmc_data.py first to generate the summary file.")
-        return
-
-    print(f"\nData Summary:")
-    print(f"  Summary records: {len(df)}")
-    print(f"  Raw records: {len(dff)}")
-    print(f"  Countries: {df['country'].nunique()}")
-    print(f"  Displacement types: {df['displacement_type'].unique().tolist()}")
-
-    # Run all visualizations
-    print("\n" + "=" * 60)
-    print("Generating Visualizations")
-    print("=" * 60)
-
-    plot_geographic_distribution(df, shapefile_path, output_dir)
-    plot_displacement_type_comparison(df, output_dir)
-    plot_top_events(df, output_dir)
-    plot_displacement_trend(dff, output_dir)
-    plot_displacement_trend_2025(dff, output_dir)
-    plot_disaster_map_with_donuts(shapefile_path, icons_dir, output_dir)
-
-    print("\n" + "=" * 60)
-    print("Analysis Complete!")
-    print(f"All visualizations saved to: {output_dir}")
-    print("=" * 60)
-
-
 if __name__ == '__main__':
-    main()
+    print("This module provides visualization functions for the pipeline.")
+    print("Use: python run_analysis.py --season OND --year 2025")
+    print("Or import individual functions from this module.")

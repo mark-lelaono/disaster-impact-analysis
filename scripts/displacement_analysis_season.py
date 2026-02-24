@@ -65,17 +65,25 @@ def get_latest_summary_file(output_dir: Path) -> Path:
 
 
 def load_data(summary_file: Path, input_dir: Path, season_cfg: dict):
-    """Load summary and raw data files, filtered for the given season's months."""
+    """Load summary and raw data files, filtered for the given season's months.
+
+    Returns (df_season, dff_season, dff_with_pre) where dff_with_pre includes
+    both pre-season and season months for trend charts.
+    For ANNUAL mode, all months are included and dff_with_pre equals dff_season.
+    """
     season_name = season_cfg['name']
     month_names = season_cfg['months']
     month_numbers = season_cfg['month_numbers']
+    pre_month_numbers = season_cfg.get('pre_month_numbers', [])
+    is_annual = season_name.upper() == 'ANNUAL'
 
     print(f"Loading summary data from: {summary_file}")
     df = pd.read_excel(summary_file)
     print(f"Summary data loaded: {len(df)} records")
 
     df_season = df[df['Month'].isin(month_names)].copy()
-    print(f"{season_name} records: {len(df_season)}")
+    label = f"Full Year" if is_annual else season_name
+    print(f"{label} records: {len(df_season)}")
 
     raw_file = input_dir / 'idmc_idus.xlsx'
     print(f"Loading raw data from: {raw_file}")
@@ -85,16 +93,32 @@ def load_data(summary_file: Path, input_dir: Path, season_cfg: dict):
     dff['displacement_start_date'] = pd.to_datetime(dff['displacement_start_date'])
     dff['MonthNum'] = dff['displacement_start_date'].dt.month
     dff_season = dff[dff['MonthNum'].isin(month_numbers)].copy()
-    print(f"{season_name} raw records: {len(dff_season)}")
+    print(f"{label} raw records: {len(dff_season)}")
 
-    return df_season, dff_season
+    if is_annual:
+        # No pre-season concept for annual — dff_with_pre is same as dff_season
+        dff_with_pre = dff_season.copy()
+        print(f"Annual mode: all 12 months included")
+    else:
+        # Pre-season + season raw data for trend charts
+        all_relevant_months = sorted(set(pre_month_numbers + month_numbers))
+        dff_with_pre = dff[dff['MonthNum'].isin(all_relevant_months)].copy()
+        print(f"Pre-{season_name} + {season_name} raw records: {len(dff_with_pre)}")
+
+    return df_season, dff_season, dff_with_pre
+
+
+def _title_label(season_cfg):
+    """Return display label for chart titles (e.g. 'OND' or 'Full Year')."""
+    return "Full Year" if season_cfg['name'].upper() == 'ANNUAL' else season_cfg['name']
 
 
 def plot_geographic_distribution(df, shapefile_path, output_dir, season_cfg, year, footer_text):
     """Plot geographic distribution of seasonal displacements."""
     season = season_cfg['name']
     prefix = season.lower()
-    print(f"\n--- {season} Geographic Distribution ---")
+    title_label = _title_label(season_cfg)
+    print(f"\n--- {title_label} Geographic Distribution ---")
 
     country_figures = df.groupby('country')['figure'].sum().reset_index().sort_values(by='figure', ascending=False)
 
@@ -102,7 +126,7 @@ def plot_geographic_distribution(df, shapefile_path, output_dir, season_cfg, yea
     sns.barplot(data=country_figures, y='country', x='figure', hue='country', palette='tab10', ax=ax)
     ax.set_xscale('log')
     ax.xaxis.set_major_formatter(FuncFormatter(format_number))
-    ax.set_title(f"{season} {year} Displacements by Country", fontsize=16)
+    ax.set_title(f"{title_label} {year} Displacements by Country", fontsize=16)
     ax.set_xlabel("Displacements", fontsize=14)
     ax.set_ylabel("Country", fontsize=14)
     add_data_source_footer(fig, footer_text)
@@ -121,7 +145,7 @@ def plot_geographic_distribution(df, shapefile_path, output_dir, season_cfg, yea
 
     fig, ax = plt.subplots(figsize=(14, 9))
     merged.plot(column='log_figure', cmap='OrRd', legend=True, edgecolor='black', ax=ax)
-    ax.set_title(f'{season} {year} Displacement Figures by Country', fontsize=16)
+    ax.set_title(f'{title_label} {year} Displacement Figures by Country', fontsize=16)
     ax.axis('off')
     add_data_source_footer(fig, footer_text, y_position=0.02)
     plt.tight_layout()
@@ -135,7 +159,8 @@ def plot_displacement_type_comparison(df, output_dir, season_cfg, year, footer_t
     season = season_cfg['name']
     prefix = season.lower()
     month_order = season_cfg['months']
-    print(f"\n--- {season} Displacement Type Comparison ---")
+    title_label = _title_label(season_cfg)
+    print(f"\n--- {title_label} Displacement Type Comparison ---")
 
     # Pie Chart
     type_summary = df.groupby('displacement_type')['figure'].sum().reset_index()
@@ -148,7 +173,7 @@ def plot_displacement_type_comparison(df, output_dir, season_cfg, year, footer_t
         startangle=140,
         textprops={'fontsize': 12}
     )
-    ax.set_title(f"{season} {year} Displacement by Type", fontsize=16)
+    ax.set_title(f"{title_label} {year} Displacement by Type", fontsize=16)
     add_data_source_footer(fig, footer_text, y_position=0.02)
     plt.tight_layout()
     plt.savefig(output_dir / f'{prefix}_displacement_by_type_pie.png', dpi=300, bbox_inches='tight')
@@ -163,7 +188,7 @@ def plot_displacement_type_comparison(df, output_dir, season_cfg, year, footer_t
     fig, ax = plt.subplots(figsize=(12, 7))
     type_month.plot(kind='bar', stacked=True, ax=ax)
     ax.yaxis.set_major_formatter(FuncFormatter(format_number))
-    ax.set_title(f"{season} {year} Monthly Displacement by Type", fontsize=16)
+    ax.set_title(f"{title_label} {year} Monthly Displacement by Type", fontsize=16)
     ax.set_ylabel("Displacements", fontsize=14)
     ax.set_xlabel("Month", fontsize=14)
     plt.xticks(rotation=45, fontsize=12)
@@ -181,7 +206,8 @@ def plot_disaster_type_breakdown(df, output_dir, season_cfg, year, footer_text):
     """Plot breakdown by disaster type for the season."""
     season = season_cfg['name']
     prefix = season.lower()
-    print(f"\n--- {season} Disaster Type Breakdown ---")
+    title_label = _title_label(season_cfg)
+    print(f"\n--- {title_label} Disaster Type Breakdown ---")
 
     if 'Disaster_Type' not in df.columns:
         print("Warning: Disaster_Type column not found. Skipping disaster type breakdown.")
@@ -193,7 +219,7 @@ def plot_disaster_type_breakdown(df, output_dir, season_cfg, year, footer_text):
     sns.barplot(data=disaster_figures, x='Disaster_Type', y='figure', hue='Disaster_Type', palette='Set2', ax=ax)
     ax.set_yscale('log')
     ax.yaxis.set_major_formatter(FuncFormatter(format_number))
-    ax.set_title(f"{season} {year} Displacements by Disaster Type", fontsize=16)
+    ax.set_title(f"{title_label} {year} Displacements by Disaster Type", fontsize=16)
     ax.set_xlabel("Disaster Type", fontsize=14)
     ax.set_ylabel("Displacements", fontsize=14)
     plt.xticks(rotation=45, ha='right', fontsize=12)
@@ -222,7 +248,7 @@ def plot_disaster_type_breakdown(df, output_dir, season_cfg, year, footer_text):
     ax.legend(wedges, legend_labels, title="Disaster Types", loc='lower right',
               bbox_to_anchor=(1.15, 0.0), fontsize=10, title_fontsize=11)
 
-    ax.set_title(f"{season} {year} Displacement by Disaster Type", fontsize=16)
+    ax.set_title(f"{title_label} {year} Displacement by Disaster Type", fontsize=16)
     add_data_source_footer(fig, footer_text, y_position=0.02)
     plt.tight_layout()
     plt.savefig(output_dir / f'{prefix}_disaster_type_pie.png', dpi=300, bbox_inches='tight')
@@ -234,7 +260,8 @@ def plot_top_events(df, output_dir, season_cfg, year, footer_text):
     """Plot top 10 events causing displacement for the season."""
     season = season_cfg['name']
     prefix = season.lower()
-    print(f"\n--- {season} Event-Level Insights ---")
+    title_label = _title_label(season_cfg)
+    print(f"\n--- {title_label} Event-Level Insights ---")
 
     top_events = df.groupby('event_name')['figure'].sum().sort_values(ascending=False).head(10).reset_index()
 
@@ -242,7 +269,7 @@ def plot_top_events(df, output_dir, season_cfg, year, footer_text):
     sns.barplot(data=top_events, y='event_name', hue='event_name', x='figure', palette='tab10', ax=ax)
     ax.set_xscale('log')
     ax.xaxis.set_major_formatter(FuncFormatter(format_number))
-    ax.set_title(f"Top 10 {season} {year} Events Causing Displacement", fontsize=30)
+    ax.set_title(f"Top 10 {title_label} {year} Events Causing Displacement", fontsize=30)
     ax.set_xlabel("Displacements", fontsize=30)
     ax.set_ylabel("Event Name", fontsize=30)
     ax.legend([], [], frameon=False)
@@ -258,7 +285,8 @@ def plot_trend_over_years(dff, output_dir, season_cfg, footer_text):
     season = season_cfg['name']
     prefix = season.lower()
     month_order = season_cfg['months']
-    print(f"\n--- {season} Trends Over Years ---")
+    title_label = _title_label(season_cfg)
+    print(f"\n--- {title_label} Trends Over Years ---")
 
     dff['Year'] = dff['displacement_start_date'].dt.year
     dff['MonthName'] = dff['displacement_start_date'].dt.strftime('%B')
@@ -275,7 +303,7 @@ def plot_trend_over_years(dff, output_dir, season_cfg, footer_text):
 
     ax.set_yscale('log')
     ax.yaxis.set_major_formatter(FuncFormatter(format_number))
-    ax.set_title(f"{season} Displacement Trends Across Years", fontsize=16)
+    ax.set_title(f"{title_label} Displacement Trends Across Years", fontsize=16)
     ax.set_xlabel("Month", fontsize=14)
     ax.set_ylabel("Displacements (log scale)", fontsize=14)
     ax.legend(title='Year', fontsize=12, title_fontsize=13)
@@ -301,7 +329,7 @@ def plot_trend_over_years(dff, output_dir, season_cfg, footer_text):
                 ha='center', va='bottom', fontsize=12, fontweight='bold')
 
     ax.yaxis.set_major_formatter(FuncFormatter(format_number))
-    ax.set_title(f"Total {season} Displacements by Year", fontsize=16)
+    ax.set_title(f"Total {title_label} Displacements by Year", fontsize=16)
     ax.set_xlabel("Year", fontsize=14)
     ax.set_ylabel("Total Displacements", fontsize=14)
     plt.xticks(fontsize=12)
@@ -314,12 +342,90 @@ def plot_trend_over_years(dff, output_dir, season_cfg, footer_text):
     print(f"Saved: {prefix}_total_by_year.png")
 
 
+def plot_pre_season_trend(dff, output_dir, season_cfg, year, footer_text):
+    """Plot displacement trend for Pre-season + season months of the given year.
+
+    For ANNUAL mode, plots all 12 months as a single continuous line (no pre-season split).
+    """
+    season = season_cfg['name']
+    prefix = season.lower()
+    is_annual = season.upper() == 'ANNUAL'
+    season_months = season_cfg['month_numbers']
+    pre_months = season_cfg.get('pre_month_numbers', [])
+    allowed_months = sorted(set(pre_months + season_months))
+
+    title_label = _title_label(season_cfg)
+    print(f"\n--- {title_label} Monthly Trend ({year}) ---")
+
+    dff['Year'] = dff['displacement_start_date'].dt.year
+    dff['MonthNum'] = dff['displacement_start_date'].dt.month
+    dff['MonthName'] = dff['displacement_start_date'].dt.strftime('%B')
+
+    # Filter to specified year and allowed months only
+    dff_year = dff[(dff['Year'] == year) & (dff['MonthNum'].isin(allowed_months))].copy()
+
+    monthly = dff_year.groupby(['MonthNum', 'MonthName'])['figure'].sum().reset_index()
+    monthly = monthly.sort_values('MonthNum')
+
+    if monthly.empty:
+        print(f"No data for {title_label} {year}. Skipping.")
+        return
+
+    fig, ax = plt.subplots(figsize=(14, 6))
+
+    if is_annual:
+        # Single continuous line for full year
+        ax.plot(monthly['MonthName'], monthly['figure'], marker='o', color='coral',
+                label=f'{year}', linewidth=2, markersize=8)
+        ax.set_title(f"Monthly Displacement Trend - {year}", fontsize=16)
+        chart_filename = f'{prefix}_monthly_trend_{year}.png'
+    else:
+        first_season_month = min(season_months)
+
+        # Pre-season (blue)
+        data_pre = monthly[monthly['MonthNum'] < first_season_month]
+        if not data_pre.empty:
+            ax.plot(data_pre['MonthName'], data_pre['figure'], marker='o', color='blue',
+                    label=f'Pre-{season} {year}', linewidth=2, markersize=8)
+
+        # Season (red)
+        data_season = monthly[monthly['MonthNum'] >= first_season_month]
+        if not data_season.empty:
+            ax.plot(data_season['MonthName'], data_season['figure'], marker='o', color='red',
+                    label=f'{season} {year}', linewidth=2, markersize=8)
+
+        # Connect last pre to first season point
+        if not data_pre.empty and not data_season.empty:
+            ax.plot(
+                [data_pre.iloc[-1]['MonthName'], data_season.iloc[0]['MonthName']],
+                [data_pre.iloc[-1]['figure'], data_season.iloc[0]['figure']],
+                color='blue', linestyle='-', linewidth=2
+            )
+
+        ax.set_title(f"Pre-{season} & {season} Displacement Trend - {year}", fontsize=16)
+        chart_filename = f'{prefix}_pre_season_trend_{year}.png'
+
+    ax.set_yscale('log')
+    ax.yaxis.set_major_formatter(FuncFormatter(format_number))
+    ax.set_xlabel(f"{year} Months", fontsize=14)
+    ax.set_ylabel("Number of Displacements", fontsize=14)
+    ax.legend(fontsize=12, title='Period', title_fontsize=13)
+    plt.xticks(rotation=45, fontsize=12)
+    add_data_source_footer(fig, footer_text)
+    plt.tight_layout()
+    plt.subplots_adjust(bottom=0.18)
+    plt.savefig(output_dir / chart_filename, dpi=300, bbox_inches='tight')
+    plt.close()
+    print(f"Saved: {chart_filename}")
+
+
 def plot_country_month_heatmap(df, output_dir, season_cfg, year, footer_text):
     """Plot heatmap of displacements by country and season month."""
     season = season_cfg['name']
     prefix = season.lower()
     month_order = season_cfg['months']
-    print(f"\n--- {season} Country-Month Heatmap ---")
+    title_label = _title_label(season_cfg)
+    print(f"\n--- {title_label} Country-Month Heatmap ---")
 
     heatmap_data = df.pivot_table(values='figure', index='country', columns='Month', aggfunc='sum', fill_value=0)
     available_months = [m for m in month_order if m in heatmap_data.columns]
@@ -331,16 +437,19 @@ def plot_country_month_heatmap(df, output_dir, season_cfg, year, footer_text):
 
     annot_data = heatmap_data.map(format_heatmap_annotation)
 
-    fig, ax = plt.subplots(figsize=(12, 10))
+    n_countries = len(heatmap_data)
+    fig_height = max(8, n_countries * 0.9 + 3)
+    fig, ax = plt.subplots(figsize=(16, fig_height))
     sns.heatmap(heatmap_data, annot=annot_data, fmt='', cmap='YlOrRd',
                 linewidths=0.5, cbar_kws={'label': 'Displacements'}, ax=ax,
                 annot_kws={'fontsize': 18, 'fontweight': 'bold'})
-    ax.set_title(f"{season} {year} Displacements: Country vs Month", fontsize=22, fontweight='bold')
+    ax.set_title(f"{title_label} {year} Displacements: Country vs Month", fontsize=22, fontweight='bold')
     ax.set_xlabel("Month", fontsize=18)
     ax.set_ylabel("Country", fontsize=18)
     ax.tick_params(axis='x', labelsize=16)
-    ax.tick_params(axis='y', labelsize=16)
+    ax.tick_params(axis='y', labelsize=14, labelrotation=0)
     cbar = ax.collections[0].colorbar
+    cbar.ax.yaxis.set_major_formatter(FuncFormatter(format_number))
     cbar.ax.tick_params(labelsize=14)
     cbar.set_label('Displacements', fontsize=16)
     add_data_source_footer(fig, footer_text, y_position=0.02)
@@ -355,7 +464,8 @@ def generate_summary_stats(df, dff, output_dir, season_cfg, year):
     season = season_cfg['name']
     prefix = season.lower()
     month_order = season_cfg['months']
-    print(f"\n--- {season} Summary Statistics ---")
+    title_label = _title_label(season_cfg)
+    print(f"\n--- {title_label} Summary Statistics ---")
 
     total_displaced = df['figure'].sum()
     num_events = df['event_name'].nunique()
@@ -367,10 +477,10 @@ def generate_summary_stats(df, dff, output_dir, season_cfg, year):
     monthly_breakdown = df.groupby('Month')['figure'].sum()
 
     summary = f"""
-{season} {year} DISPLACEMENT ANALYSIS SUMMARY
+{title_label} {year} DISPLACEMENT ANALYSIS SUMMARY
 {'='*50}
 
-Total Displaced ({season}): {total_displaced:,.0f}
+Total Displaced ({title_label}): {total_displaced:,.0f}
 Number of Events: {num_events}
 Countries Affected: {num_countries}
 
@@ -424,25 +534,30 @@ def run_seasonal_analysis(
     if summary_file is None:
         summary_file = get_latest_summary_file(output_dir)
 
+    is_annual = season.upper() == 'ANNUAL'
+    title_label = "Full Year" if is_annual else season
+
     print("=" * 60)
-    print(f"IDMC {season} ({season_cfg['long_name']}) Displacement Analysis")
+    print(f"IDMC {title_label} ({season_cfg['long_name']}) Displacement Analysis")
     print(f"Year: {year}")
     print("=" * 60)
 
-    df_season, dff_season = load_data(summary_file, input_dir, season_cfg)
+    df_season, dff_season, dff_with_pre = load_data(summary_file, input_dir, season_cfg)
 
     if len(df_season) == 0:
-        print(f"Warning: No {season} data found in the summary file.")
+        print(f"Warning: No {title_label} data found in the summary file.")
         return df_season
 
-    print(f"\n{season} Data Summary:")
+    print(f"\n{title_label} Data Summary:")
     print(f"  Summary records: {len(df_season)}")
     print(f"  Raw records: {len(dff_season)}")
+    if not is_annual:
+        print(f"  Pre-{season} + {season} raw records: {len(dff_with_pre)}")
     print(f"  Countries: {df_season['country'].nunique()}")
     print(f"  Displacement types: {df_season['displacement_type'].unique().tolist()}")
     print(f"  Months: {df_season['Month'].unique().tolist()}")
 
-    print(f"\nGenerating {season} Visualizations")
+    print(f"\nGenerating {title_label} Visualizations")
     print("=" * 60)
 
     plot_geographic_distribution(df_season, shapefile_path, output_dir, season_cfg, year, footer_text)
@@ -450,10 +565,11 @@ def run_seasonal_analysis(
     plot_disaster_type_breakdown(df_season, output_dir, season_cfg, year, footer_text)
     plot_top_events(df_season, output_dir, season_cfg, year, footer_text)
     plot_trend_over_years(dff_season, output_dir, season_cfg, footer_text)
+    plot_pre_season_trend(dff_with_pre, output_dir, season_cfg, year, footer_text)
     plot_country_month_heatmap(df_season, output_dir, season_cfg, year, footer_text)
     generate_summary_stats(df_season, dff_season, output_dir, season_cfg, year)
 
-    print(f"\n{season} Analysis Complete!")
+    print(f"\n{title_label} Analysis Complete!")
     print(f"All visualizations saved to: {output_dir}")
 
     return df_season
@@ -461,8 +577,8 @@ def run_seasonal_analysis(
 
 def main():
     parser = argparse.ArgumentParser(description="Seasonal Displacement Analysis")
-    parser.add_argument('--season', required=True, choices=['OND', 'MAM', 'JJAS'],
-                        help='Season to analyze')
+    parser.add_argument('--season', required=True, choices=['OND', 'MAM', 'JJAS', 'ANNUAL'],
+                        help='Season to analyze (use ANNUAL for full-year analysis)')
     parser.add_argument('--year', type=int, required=True, help='Year to analyze')
     args = parser.parse_args()
 

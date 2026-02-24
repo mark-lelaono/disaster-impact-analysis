@@ -1,15 +1,21 @@
 """
-Disaster Map with Donut Charts Script - OND 2025 DRM Data
+Disaster Map with Donut Charts Script
 
 This script creates a visualization showing:
 - East Africa map with disaster type icons positioned on affected countries
-- Three donut charts showing Total Events, Total Deaths, and Total Affected by disaster type
+- Three donut charts showing Total Events, Total Displaced, and breakdown by type
 - Data sources box in the top right
 
-Updated with actual DRM Sector Impact Assessment data (Oct-Dec 2025)
+Supports both:
+- Pipeline mode: receives processed DataFrame with season/year parameters
+- Standalone mode: uses hardcoded OND 2025 DRM data as fallback
 
 Usage:
-    python disaster_map_with_donuts.py
+    # Standalone (OND 2025 DRM data)
+    python disaster_map_with_donuts_drm.py
+
+    # Via pipeline
+    python run_analysis.py --season MAM --year 2025
 """
 
 import pandas as pd
@@ -25,7 +31,10 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 try:
-    from config import EAST_AFRICA_COUNTRIES, SHAPEFILE_PATH, ICONS_DIR, OUTPUT_DIR
+    from config import (
+        EAST_AFRICA_COUNTRIES, SHAPEFILE_PATH, ICONS_DIR, OUTPUT_DIR,
+        get_season_config, SEASONS
+    )
 except ImportError:
     EAST_AFRICA_COUNTRIES = [
         "Somalia", "Tanzania", "Ethiopia", "Uganda", "Kenya", "Rwanda",
@@ -34,11 +43,108 @@ except ImportError:
     SHAPEFILE_PATH = None
     ICONS_DIR = None
     OUTPUT_DIR = None
+    get_season_config = None
+    SEASONS = None
 
 
-# Configuration
+# Default configuration (used for standalone OND 2025 mode)
 ANALYSIS_PERIOD = "October - December 2025"
 DATA_SOURCES = "IGAD-TAC, ECHO, IOM, UNOCHA, IPC, IFRC, WHO,\nReliefWeb, FEWS NET"
+
+
+def build_disaster_data_from_pipeline(df, season_cfg=None, min_icons_per_country=3):
+    """
+    Build the disaster_data DataFrame from the pipeline's processed summary data.
+
+    Converts the pipeline format (one row per displacement record) into the
+    DRM-style format needed by the map. Each row in the output becomes one icon
+    on the map. Countries with many events get proportionally more icons
+    (minimum ``min_icons_per_country`` icons per country).
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Processed summary data with columns: country, Disaster_Type, figure,
+        displacement_type, Month, etc.
+    season_cfg : dict, optional
+        Season configuration from config.py.
+    min_icons_per_country : int
+        Minimum number of icons to show per country (default 3).
+
+    Returns
+    -------
+    pd.DataFrame with columns: Country, Disaster_Type, Events, Deaths, Affected,
+        Displaced, Lat, Lon
+    """
+    # Filter to disaster records only (Conflict records have NaN Disaster_Type)
+    df_disaster = df[df['Disaster_Type'].notna()].copy()
+
+    if df_disaster.empty:
+        return pd.DataFrame(columns=[
+            'Country', 'Disaster_Type', 'Events', 'Deaths',
+            'Affected', 'Displaced', 'Lat', 'Lon'
+        ])
+
+    # Aggregate: one row per country + disaster type
+    agg = df_disaster.groupby(['country', 'Disaster_Type']).agg(
+        Events=('figure', 'count'),
+        Displaced=('figure', 'sum'),
+    ).reset_index()
+
+    agg = agg.rename(columns={'country': 'Country'})
+
+    # Expand rows so each country gets at least min_icons_per_country icons.
+    # Icons are distributed proportionally by event count across disaster types.
+    expanded_rows = []
+    for country, grp in agg.groupby('Country'):
+        n_types = len(grp)
+        total_events = grp['Events'].sum()
+        target = max(min_icons_per_country, n_types)
+
+        # Distribute target icons proportionally by event count
+        grp = grp.sort_values('Events', ascending=False).reset_index(drop=True)
+        icon_counts = []
+        remaining = target
+        for i, row in grp.iterrows():
+            if i == len(grp) - 1:
+                count = remaining
+            else:
+                count = max(1, round(target * row['Events'] / total_events))
+                count = min(count, remaining - (len(grp) - 1 - i))
+            icon_counts.append(count)
+            remaining -= count
+
+        for (_, row), n_icons in zip(grp.iterrows(), icon_counts):
+            for _ in range(n_icons):
+                expanded_rows.append({
+                    'Country': row['Country'],
+                    'Disaster_Type': row['Disaster_Type'],
+                    'Events': row['Events'],
+                    'Deaths': 0,
+                    'Affected': 0,
+                    'Displaced': row['Displaced'],
+                    'Lat': 0.0,
+                    'Lon': 0.0,
+                })
+
+    return pd.DataFrame(expanded_rows)
+
+
+def get_analysis_period_text(season: str, year: int) -> str:
+    """Generate analysis period text from season and year."""
+    if season.upper() == 'ANNUAL':
+        return f"January - December {year}"
+    if get_season_config:
+        cfg = get_season_config(season)
+        months = cfg['months']
+        return f"{months[0]} - {months[-1]} {year}"
+    # Fallback
+    season_months = {
+        'OND': 'October - December',
+        'MAM': 'March - May',
+        'JJAS': 'June - September',
+    }
+    return f"{season_months.get(season, season)} {year}"
 
 # Disaster type colors for donut charts
 DISASTER_COLORS = {
@@ -48,6 +154,7 @@ DISASTER_COLORS = {
     "Epidemic": "#d62728",   # Red
     "Storm": "#9467bd",      # Purple
     "Landslide": "#8c564b",  # Brown
+    "Mass Movement": "#8c564b",  # Brown (same as Landslide)
     "Fire": "#e377c2",       # Pink
     "Conflict": "#7f7f7f",   # Gray
     "Lightning": "#bcbd22",  # Yellow-green
@@ -404,6 +511,7 @@ def get_icon_path(disaster_type: str, icons_dir: Path) -> Path:
         "Epidemic": "Epidemic_icon.png",
         "Storm": "Storm_icon.png",
         "Landslide": "Landslide_icon.png",
+        "Mass Movement": "Landslide_icon.png",
         "Fire": "Fire_icon.png",
         "Conflict": "Conflict_icon.png",
         "Lightning": "Lightning_icon.png",
@@ -500,26 +608,37 @@ def create_icon_legend(ax, disaster_types, icons_dir: Path, position='lower left
     """
     from matplotlib.offsetbox import HPacker, VPacker, TextArea, OffsetImage, AnnotationBbox
 
+    # Legend display names
+    display_names = {
+        "Flood": "Floods",
+        "Mass Movement": "Landslide",
+    }
+
     # Create legend items with icons
     legend_items = []
 
+    # Add "Legend" header
+    header = TextArea("Legend", textprops=dict(fontsize=13, fontweight='bold'))
+    legend_items.append(header)
+
     for disaster_type in sorted(disaster_types):
         icon_path = get_icon_path(disaster_type, icons_dir)
+        label = display_names.get(disaster_type, disaster_type)
 
         if icon_path.exists():
             try:
                 icon_img = mpimg.imread(str(icon_path))
-                icon_box = OffsetImage(icon_img, zoom=0.03)
+                icon_box = OffsetImage(icon_img, zoom=0.09)
                 icon_box.image.axes = ax
-                text_box = TextArea(f"  {disaster_type}", textprops=dict(fontsize=11))
+                text_box = TextArea(f"  {label}", textprops=dict(fontsize=12))
                 row = HPacker(children=[icon_box, text_box], align='center', pad=0, sep=5)
                 legend_items.append(row)
             except Exception as e:
                 print(f"Warning: Could not load icon for {disaster_type}: {e}")
-                text_box = TextArea(f"  {disaster_type}", textprops=dict(fontsize=11))
+                text_box = TextArea(f"  {label}", textprops=dict(fontsize=11))
                 legend_items.append(text_box)
         else:
-            text_box = TextArea(f"  {disaster_type}", textprops=dict(fontsize=11))
+            text_box = TextArea(f"  {label}", textprops=dict(fontsize=11))
             legend_items.append(text_box)
 
     legend_box = VPacker(children=legend_items, align='left', pad=5, sep=8)
@@ -551,34 +670,71 @@ def create_icon_legend(ax, disaster_types, icons_dir: Path, position='lower left
     return anchored_box
 
 
-def create_impact_summary_table(ax, impact_data):
+def get_icon_slots(geom, n_icons, spacing=1.5):
     """
-    Create a summary table showing key impact metrics by country.
+    Generate n non-overlapping icon positions inside a country polygon.
+
+    Places icons in a compact grid centred on the polygon's representative
+    interior point, with the given spacing (in degrees).  Every candidate
+    is guaranteed to lie inside the polygon; if a grid cell falls outside
+    the boundary it is nudged inward toward the centre.
+
+    Parameters
+    ----------
+    geom : shapely geometry
+        The country polygon / multipolygon.
+    n_icons : int
+        How many positions are needed.
+    spacing : float
+        Gap between icon centres in degrees.
+
+    Returns
+    -------
+    list of (lon, lat) tuples
     """
-    ax.axis('off')
-    
-    # Prepare table data
-    countries = list(impact_data.keys())
-    affected = [f"{impact_data[c]['affected']:,}" if impact_data[c]['affected'] > 0 else "N/A" for c in countries]
-    displaced = [f"{impact_data[c]['displaced']:,}" if impact_data[c]['displaced'] > 0 else "N/A" for c in countries]
-    deaths = [str(impact_data[c]['deaths']) for c in countries]
-    
-    table_data = list(zip(countries, affected, displaced, deaths))
-    
-    # Create table
-    table = ax.table(
-        cellText=table_data,
-        colLabels=['Country', 'Affected', 'Displaced', 'Deaths'],
-        loc='center',
-        cellLoc='center',
-        colColours=['#E8E8E8'] * 4
-    )
-    
-    table.auto_set_font_size(False)
-    table.set_fontsize(9)
-    table.scale(1.2, 1.5)
-    
-    return table
+    from shapely.geometry import Point
+
+    # representative_point() is always inside the polygon (unlike centroid)
+    centre = geom.representative_point()
+    cx, cy = centre.x, centre.y
+
+    if n_icons == 1:
+        return [(cx, cy)]
+
+    # Scatter icons in concentric rings around the centre.
+    # First icon at centre, rest spread at varying angles and radii.
+    positions = [(cx, cy)]  # first icon goes at centre
+    remaining = n_icons - 1
+
+    # Place remaining icons in a ring, evenly spaced by angle
+    # with a slight radial jitter so they don't look mechanical
+    ring_angles = []
+    angle_step = 360.0 / remaining
+    # Start at a tilted angle (not 0°) so icons don't align horizontally
+    start_angle = 35.0
+    for i in range(remaining):
+        ring_angles.append(start_angle + i * angle_step)
+
+    for angle_deg in ring_angles:
+        angle_rad = np.radians(angle_deg)
+        dx = spacing * np.cos(angle_rad)
+        dy = spacing * np.sin(angle_rad)
+        lon, lat = cx + dx, cy + dy
+        pt = Point(lon, lat)
+        if geom.contains(pt):
+            positions.append((lon, lat))
+        else:
+            # Shrink radius toward centre until inside
+            for t in (0.2, 0.35, 0.5, 0.65, 0.8, 0.9, 1.0):
+                nlon = lon + (cx - lon) * t
+                nlat = lat + (cy - lat) * t
+                if geom.contains(Point(nlon, nlat)):
+                    positions.append((nlon, nlat))
+                    break
+            else:
+                positions.append((cx, cy))
+
+    return positions
 
 
 def plot_disaster_map_with_donuts(
@@ -586,22 +742,52 @@ def plot_disaster_map_with_donuts(
     icons_dir: Path,
     output_dir: Path,
     disaster_data: pd.DataFrame = None,
-    analysis_period: str = ANALYSIS_PERIOD,
-    data_sources: str = DATA_SOURCES
+    analysis_period: str = None,
+    data_sources: str = DATA_SOURCES,
+    season: str = None,
+    year: int = None,
+    pipeline_df: pd.DataFrame = None,
 ):
     """
     Create the main visualization with map and donut charts.
-    
-    Uses actual DRM Sector Impact Assessment data from OND 2025.
+
+    Parameters
+    ----------
+    shapefile_path, icons_dir, output_dir : Path
+        Standard path arguments.
+    disaster_data : pd.DataFrame, optional
+        Pre-built DRM-format data (Country, Disaster_Type, Events, etc.).
+    analysis_period : str, optional
+        Override text for the title. Auto-generated from season/year if None.
+    data_sources : str
+        Footer text for data sources.
+    season : str, optional
+        Season code ('OND', 'MAM', 'JJAS'). Used for title and filename.
+    year : int, optional
+        Analysis year. Used for title and filename.
+    pipeline_df : pd.DataFrame, optional
+        Raw processed DataFrame from the pipeline (summary data).
+        If provided, disaster_data is built from it automatically.
     """
+    season_label = season or 'OND'
+    year_label = year or 2025
+
+    # Determine analysis period text
+    if analysis_period is None:
+        analysis_period = get_analysis_period_text(season_label, year_label)
+
     print("=" * 60)
     print("Creating Disaster Map with Donut Charts")
-    print("DRM Sector Impact Assessment - OND 2025")
+    print(f"{season_label} {year_label}")
     print("=" * 60)
 
-    # Load actual DRM data
-    if disaster_data is None:
-        print("Loading DRM Sector Impact Assessment data...")
+    # Build disaster data from pipeline or load hardcoded DRM data
+    if disaster_data is None and pipeline_df is not None:
+        season_cfg = get_season_config(season_label) if get_season_config else None
+        disaster_data = build_disaster_data_from_pipeline(pipeline_df, season_cfg)
+        print(f"Built disaster data from pipeline: {len(disaster_data)} country-hazard records")
+    elif disaster_data is None:
+        print("Loading hardcoded DRM Sector Impact Assessment data (OND 2025)...")
         disaster_data = load_disaster_data()
 
     print(f"Loaded {len(disaster_data)} disaster records")
@@ -614,32 +800,39 @@ def plot_disaster_map_with_donuts(
     geo_df_ea = geo_df[geo_df['COUNTRY'].isin(EAST_AFRICA_COUNTRIES)].copy()
     print(f"Filtered to {len(geo_df_ea)} East African countries")
 
-    # Aggregate data for donut charts
-    events_by_type = disaster_data.groupby('Disaster_Type')['Events'].sum()
-    deaths_by_type = disaster_data.groupby('Disaster_Type')['Deaths'].sum()
-    affected_by_type = disaster_data.groupby('Disaster_Type')['Affected'].sum()
-    
-    # Also calculate displaced for reference
-    displaced_by_type = disaster_data.groupby('Disaster_Type')['Displaced'].sum()
+    # Deduplicate for donut chart totals (expanded icon rows share the same
+    # Events/Displaced values, so aggregate per country+type first)
+    unique_combos = disaster_data.groupby(['Country', 'Disaster_Type']).agg(
+        Events=('Events', 'first'),
+        Displaced=('Displaced', 'first'),
+        Affected=('Affected', 'first') if 'Affected' in disaster_data.columns else ('Displaced', 'first'),
+    ).reset_index()
+
+    events_by_type = unique_combos.groupby('Disaster_Type')['Events'].sum()
+    displaced_by_type = unique_combos.groupby('Disaster_Type')['Displaced'].sum()
+
+    # Affected: use real data if available, otherwise fall back to Displaced
+    if 'Affected' in unique_combos.columns and unique_combos['Affected'].sum() > 0:
+        affected_by_type = unique_combos.groupby('Disaster_Type')['Affected'].sum()
+    else:
+        affected_by_type = displaced_by_type.copy()
 
     total_events = events_by_type.sum()
-    total_deaths = deaths_by_type.sum()
-    total_affected = affected_by_type.sum()
     total_displaced = displaced_by_type.sum()
+    total_affected = affected_by_type.sum()
 
     print(f"\n{'='*40}")
-    print("DRM IMPACT SCALE SUMMARY")
+    print(f"IMPACT SUMMARY — {season_label} {year_label}")
     print(f"{'='*40}")
     print(f"  Total Events:    {total_events:,}")
-    print(f"  Total Deaths:    {total_deaths:,}")
-    print(f"  Total Affected:  {total_affected:,}")
     print(f"  Total Displaced: {total_displaced:,}")
+    print(f"  Total Affected:  {total_affected:,}")
     print(f"{'='*40}")
-    
+
     print("\nBreakdown by Disaster Type:")
     print("-" * 50)
     for dtype in events_by_type.index:
-        print(f"  {dtype:12} | Events: {events_by_type[dtype]:3} | Deaths: {deaths_by_type[dtype]:5,} | Affected: {affected_by_type[dtype]:10,}")
+        print(f"  {dtype:12} | Events: {events_by_type[dtype]:3} | Displaced: {displaced_by_type.get(dtype, 0):10,} | Affected: {affected_by_type.get(dtype, 0):10,}")
 
     # Create figure with custom layout and white background
     fig = plt.figure(figsize=(20, 14), facecolor='white')
@@ -667,18 +860,45 @@ def plot_disaster_map_with_donuts(
     )
     ax_map.axis('off')
 
-    # Add disaster icons to map
+    # Place icons inside each country — positions computed from polygon
     print("Adding disaster icons to map...")
     icons_added = 0
 
-    for _, row in disaster_data.iterrows():
-        icon_path = get_icon_path(row['Disaster_Type'], icons_dir)
-        if add_icon_to_map(ax_map, row['Lon'], row['Lat'], icon_path, zoom=0.05):
-            icons_added += 1
+    for country, group in disaster_data.groupby('Country'):
+        n = len(group)
+        country_row = geo_df_ea[geo_df_ea['COUNTRY'] == country]
+
+        if len(country_row) == 0:
+            # Country not in shapefile — fall back to data coords
+            for _, row in group.iterrows():
+                icon_path = get_icon_path(row['Disaster_Type'], icons_dir)
+                if add_icon_to_map(ax_map, row['Lon'], row['Lat'], icon_path, zoom=0.10):
+                    icons_added += 1
+            continue
+
+        geom = country_row.geometry.iloc[0]
+
+        # Adaptive zoom & spacing based on icon count
+        if n <= 2:
+            zoom, spacing = 0.10, 2.0
+        elif n <= 4:
+            zoom, spacing = 0.085, 1.8
+        else:
+            zoom, spacing = 0.07, 1.5
+
+        slots = get_icon_slots(geom, n, spacing=spacing)
+
+        for i, (_, row) in enumerate(group.iterrows()):
+            lon, lat = slots[i] if i < len(slots) else (geom.representative_point().x, geom.representative_point().y)
+            icon_path = get_icon_path(row['Disaster_Type'], icons_dir)
+            if add_icon_to_map(ax_map, lon, lat, icon_path, zoom=zoom):
+                icons_added += 1
 
     print(f"Added {icons_added} icons to map")
 
-    # Legend removed as per user request
+    # Add icon legend to the map
+    unique_types = sorted(disaster_data['Disaster_Type'].unique())
+    create_icon_legend(ax_map, unique_types, icons_dir, position='lower right')
 
     # ----- ADD DATA SOURCES BOX -----
     sources_text = f"Sources: {data_sources}"
@@ -690,13 +910,13 @@ def plot_disaster_map_with_donuts(
     # ----- PLOT DONUT CHARTS -----
     print("Creating donut charts...")
 
-    # Total Events: Top 2 most recurring hazards (Flood: 4, Drought: 3)
+    # Donut 1: Total Events by disaster type
     create_donut_chart(ax_donut1, events_by_type, "Total Events", total_events, DISASTER_COLORS, top_n=2, show_percentages=False)
 
-    # Total Deaths: Top 2 hazards with highest deaths (Epidemic: 1,584, Flood: 110)
-    create_donut_chart(ax_donut2, deaths_by_type, "Total Deaths", total_deaths, DISASTER_COLORS, top_n=2, show_percentages=False)
+    # Donut 2: Total Displaced by disaster type
+    create_donut_chart(ax_donut2, displaced_by_type, "Total Displaced", total_displaced, DISASTER_COLORS, top_n=2, show_percentages=False)
 
-    # Total Affected: Top 2 by affected population (Drought: 7.8M, Epidemic: 1.5M)
+    # Donut 3: Total Affected by disaster type
     create_donut_chart(ax_donut3, affected_by_type, "Total Affected", total_affected, DISASTER_COLORS, top_n=2, show_percentages=False)
 
     for ax in [ax_donut1, ax_donut2, ax_donut3]:
@@ -707,12 +927,14 @@ def plot_disaster_map_with_donuts(
 
     # Add footer
     footer_text = f"Data sources: IGAD-TAC, ReliefWeb, ECHO, FEWS NET, IOM, UNOCHA, IPC, IFRC, WHO | Analysis period: {analysis_period}"
-    fig.text(0.5, 0.02, footer_text, ha='center', va='bottom', fontsize=10, style='italic', color='gray')
+    fig.text(0.5, 0.03, footer_text, ha='center', va='bottom', fontsize=10, style='italic', color='gray')
+    disclaimer = "Icons represent disaster types reported per country. Multiple icons of the same type indicate higher event frequency."
+    fig.text(0.5, 0.005, disclaimer, ha='center', va='bottom', fontsize=8, style='italic', color='gray')
 
     # Save figure
-    output_file = output_dir / 'ond_disaster_map_with_donuts.png'
+    output_file = output_dir / f'{season_label.lower()}_disaster_map_with_donuts.png'
     plt.tight_layout()
-    plt.subplots_adjust(bottom=0.05)
+    plt.subplots_adjust(bottom=0.06)
     plt.savefig(output_file, dpi=300, bbox_inches='tight', facecolor='white')
     plt.close()
 
@@ -769,12 +991,13 @@ def main():
     # Print impact scale report
     print_impact_scale_report()
 
-    # Run the visualization
+    # Run the visualization (standalone mode: OND 2025 DRM data)
     plot_disaster_map_with_donuts(
         shapefile_path=shapefile_path,
         icons_dir=icons_dir,
         output_dir=output_dir,
-        analysis_period="October - December 2025"
+        season='OND',
+        year=2025,
     )
 
 

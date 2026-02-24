@@ -60,12 +60,17 @@ def step_process(year: int, season: str) -> Path:
     from scripts.process_idmc_data import process_idmc_data
 
     season_cfg = get_season_config(season)
-    months = season_cfg['months']
 
     input_file = INPUT_DIR / 'idmc_idus.xlsx'
     output_file = OUTPUT_DIR / f'{season}_SummaryDATA_idmc_idus.xlsx'
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+    # ANNUAL: no month filter (include all months for the year)
+    if season.upper() == 'ANNUAL':
+        months = None
+    else:
+        months = season_cfg['months']
 
     process_idmc_data(
         str(input_file), str(output_file),
@@ -84,8 +89,8 @@ def step_analyze(year: int, season: str = None):
         get_latest_summary_file, load_data,
         plot_geographic_distribution, plot_displacement_type_comparison,
         plot_top_events, plot_displacement_trend, plot_displacement_trend_2025,
-        plot_disaster_map_with_donuts
     )
+    from scripts.disaster_map_with_donuts_drm import plot_disaster_map_with_donuts
 
     season_cfg = get_season_config(season) if season else None
 
@@ -97,7 +102,14 @@ def step_analyze(year: int, season: str = None):
     plot_top_events(df, OUTPUT_DIR)
     plot_displacement_trend(dff, OUTPUT_DIR, year=year, season_cfg=season_cfg)
     plot_displacement_trend_2025(dff, OUTPUT_DIR, year=year, season_cfg=season_cfg)
-    plot_disaster_map_with_donuts(SHAPEFILE_PATH, ICONS_DIR, OUTPUT_DIR)
+    plot_disaster_map_with_donuts(
+        shapefile_path=SHAPEFILE_PATH,
+        icons_dir=ICONS_DIR,
+        output_dir=OUTPUT_DIR,
+        season=season,
+        year=year,
+        pipeline_df=df,
+    )
 
     print("General analysis complete.")
 
@@ -191,8 +203,8 @@ Examples:
     )
 
     parser.add_argument(
-        '--season', choices=['OND', 'MAM', 'JJAS'],
-        help='Season to analyze'
+        '--season', choices=['OND', 'MAM', 'JJAS', 'ANNUAL'],
+        help='Season to analyze (use ANNUAL for full-year analysis)'
     )
     parser.add_argument(
         '--year', type=int,
