@@ -427,9 +427,18 @@ def plot_country_month_heatmap(df, output_dir, season_cfg, year, footer_text):
     title_label = _title_label(season_cfg)
     print(f"\n--- {title_label} Country-Month Heatmap ---")
 
+    # Abbreviated month names for x-axis labels
+    month_abbrev = {
+        'January': 'Jan', 'February': 'Feb', 'March': 'Mar',
+        'April': 'Apr', 'May': 'May', 'June': 'June',
+        'July': 'July', 'August': 'Aug', 'September': 'Sept',
+        'October': 'Oct', 'November': 'Nov', 'December': 'Dec'
+    }
+
     heatmap_data = df.pivot_table(values='figure', index='country', columns='Month', aggfunc='sum', fill_value=0)
     available_months = [m for m in month_order if m in heatmap_data.columns]
     heatmap_data = heatmap_data[available_months]
+    heatmap_data.columns = [month_abbrev.get(m, m) for m in heatmap_data.columns]
 
     heatmap_data['Total'] = heatmap_data.sum(axis=1)
     heatmap_data = heatmap_data.sort_values('Total', ascending=False)

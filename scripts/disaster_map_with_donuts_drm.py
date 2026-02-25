@@ -156,6 +156,7 @@ DISASTER_COLORS = {
     "Landslide": "#8c564b",  # Brown
     "Mass Movement": "#8c564b",  # Brown (same as Landslide)
     "Fire": "#e377c2",       # Pink
+    "Wildfire": "#e377c2",   # Pink (same as Fire)
     "Conflict": "#7f7f7f",   # Gray
     "Lightning": "#bcbd22",  # Yellow-green
     "Hailstorm": "#17becf",  # Cyan
@@ -512,7 +513,8 @@ def get_icon_path(disaster_type: str, icons_dir: Path) -> Path:
         "Storm": "Storm_icon.png",
         "Landslide": "Landslide_icon.png",
         "Mass Movement": "Landslide_icon.png",
-        "Fire": "Fire_icon.png",
+        "Fire": "Fire_40400.png",
+        "Wildfire": "Fire_40400.png",
         "Conflict": "Conflict_icon.png",
         "Lightning": "Lightning_icon.png",
         "Hailstorm": "Hailstorm_icon.png",
@@ -612,6 +614,7 @@ def create_icon_legend(ax, disaster_types, icons_dir: Path, position='lower left
     display_names = {
         "Flood": "Floods",
         "Mass Movement": "Landslide",
+        "Wildfire": "Wildfire",
     }
 
     # Create legend items with icons
