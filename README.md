@@ -13,9 +13,11 @@ A data pipeline for analyzing and visualizing disaster-related displacement in E
 │   ├── process_idmc_data.py                    # Step 2: Filter & summarize by season/year
 │   ├── displacement_analysis.py                # Step 3: General visualizations
 │   ├── displacement_analysis_season.py         # Step 4: Season-specific analysis
-│   └── disaster_map_with_donuts_drm.py         # Step 3: Disaster map with icons & donuts
+│   ├── disaster_map_with_donuts_drm.py         # Step 3: Disaster map with icons & donuts
+│   └── generate_report.py                      # Step 6: HTML report generator
 ├── Input/                                      # Raw IDMC data (idmc_idus.xlsx)
 ├── output/                                     # Generated visualizations & summary Excel
+├── reports/                                    # Generated HTML reports (auto-created)
 ├── shapefiles/                                 # ICPAC country boundary shapefiles
 ├── icons/                                      # Humanitarian disaster icons (256x256 PNG)
 └── data/                                       # SQLite database (auto-created)
@@ -44,6 +46,15 @@ IDMC API
     └──────────┬───────────────────────┘
                ▼
         [Step 5] Store results in SQLite
+               │
+               ▼
+        [Step 6] Generate HTML report
+          • Professional cover page
+          • Executive summary with key figures
+          • Embedded maps, charts & tables
+          • Seasonal comparison (ANNUAL mode)
+          • Data sources & methodology
+          → reports/{season}_displacement_report_{year}.html
 ```
 
 ## Quick Start
@@ -74,6 +85,15 @@ python run_analysis.py --season OND --year 2025 --step fetch
 python run_analysis.py --season OND --year 2025 --step process
 python run_analysis.py --season OND --year 2025 --step analyze
 python run_analysis.py --season OND --year 2025 --step seasonal
+python run_analysis.py --season OND --year 2025 --step store
+python run_analysis.py --season OND --year 2025 --step report
+```
+
+### Generate only the HTML report (from existing outputs)
+
+```bash
+python run_analysis.py --season ANNUAL --year 2025 --step report
+python run_analysis.py --season OND --year 2025 --step report
 ```
 
 ### Query previous runs
@@ -134,6 +154,29 @@ All files prefixed with the season code (e.g., `mam_`, `ond_`, `jjas_`, `annual_
 - Legend with icon previews
 - Three donut charts: Total Events, Total Displaced, Total Affected
 - Values formatted as K/M (e.g., 1.2M, 287K)
+
+### Step 6 — HTML Report
+
+Each pipeline run generates a self-contained HTML report in `reports/`:
+
+| File | Description |
+|------|-------------|
+| `{season}_displacement_report_{year}.html` | Full analytical report with embedded images |
+
+The report includes:
+- **Cover page** with headline statistics (total displaced, events, countries, conflict share)
+- **Executive summary** with key figures and critical findings
+- **Methodology** section with seasonal framework and data source documentation
+- **Full analysis** with all 12 generated maps/charts embedded as figures, plus country and disaster type data tables
+- **Seasonal comparison** (ANNUAL reports only) — side-by-side cards and comparison table for MAM, JJAS, OND with their disaster maps
+- **Data sources annex** listing all contributing organizations
+
+The report generator (`scripts/generate_report.py`) can also be run standalone:
+
+```bash
+python scripts/generate_report.py --season ANNUAL --year 2025
+python scripts/generate_report.py --season OND --year 2025
+```
 
 ## Database
 

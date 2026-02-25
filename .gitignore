@@ -36,6 +36,9 @@ Input/
 # Output files
 output/
 
+# Generated reports
+reports/
+
 # Shapefiles
 shapefiles/
 

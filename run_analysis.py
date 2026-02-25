@@ -5,7 +5,7 @@ Disaster Displacement Analysis Pipeline
 Unified CLI entry point that runs the full analysis pipeline or individual steps.
 
 Usage:
-    # Full pipeline
+    # Full pipeline (includes HTML report generation)
     python run_analysis.py --season OND --year 2025
 
     # Skip API fetch (use existing local data)
@@ -17,6 +17,7 @@ Usage:
     python run_analysis.py --season OND --year 2025 --step analyze
     python run_analysis.py --season OND --year 2025 --step seasonal
     python run_analysis.py --season OND --year 2025 --step store
+    python run_analysis.py --season OND --year 2025 --step report
 
     # List previous runs
     python run_analysis.py --list-runs
@@ -37,7 +38,9 @@ from config import (
 from db import init_db, save_analysis_run, list_runs
 
 
-VALID_STEPS = ['fetch', 'process', 'analyze', 'seasonal', 'store']
+VALID_STEPS = ['fetch', 'process', 'analyze', 'seasonal', 'store', 'report']
+
+REPORTS_DIR = PROJECT_ROOT / 'reports'
 
 
 def step_fetch():
@@ -147,8 +150,25 @@ def step_store(season: str, year: int, df, steps_executed: list) -> int:
     return run_id
 
 
+def step_report(season: str, year: int) -> Path:
+    """Step 6: Generate HTML report from analysis outputs."""
+    print("\n" + "=" * 60)
+    print(f"STEP 6: Generating {season} {year} HTML report")
+    print("=" * 60)
+    from scripts.generate_report import generate_report
+
+    report_path = generate_report(
+        season=season,
+        year=year,
+        output_dir=OUTPUT_DIR,
+        report_dir=REPORTS_DIR,
+    )
+    print(f"Report generated: {report_path}")
+    return report_path
+
+
 def run_full_pipeline(season: str, year: int, skip_fetch: bool = False):
-    """Run the complete pipeline: fetch -> process -> analyze -> seasonal -> store."""
+    """Run the complete pipeline: fetch -> process -> analyze -> seasonal -> store -> report."""
     print("=" * 60)
     print("DISASTER DISPLACEMENT ANALYSIS PIPELINE")
     print(f"Season: {season} | Year: {year}")
@@ -180,11 +200,16 @@ def run_full_pipeline(season: str, year: int, skip_fetch: bool = False):
     step_store(season, year, df_season, steps_executed)
     steps_executed.append('store')
 
+    # Step 6: Generate HTML report
+    report_path = step_report(season, year)
+    steps_executed.append('report')
+
     print("\n" + "=" * 60)
     print("PIPELINE COMPLETE")
     print(f"Finished: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"Steps executed: {', '.join(steps_executed)}")
     print(f"All outputs in: {OUTPUT_DIR}")
+    print(f"Report: {report_path}")
     print(f"Database: {DB_PATH}")
     print("=" * 60)
 
@@ -198,6 +223,7 @@ Examples:
   python run_analysis.py --season OND --year 2025
   python run_analysis.py --season MAM --year 2025 --skip-fetch
   python run_analysis.py --season JJAS --year 2025 --step seasonal
+  python run_analysis.py --season ANNUAL --year 2025 --step report
   python run_analysis.py --list-runs
         """
     )
@@ -257,6 +283,8 @@ Examples:
             print("Note: 'store' step requires seasonal analysis data. Running seasonal + store.")
             df = step_seasonal(args.year, args.season)
             step_store(args.season, args.year, df, ['seasonal', 'store'])
+        elif args.step == 'report':
+            step_report(args.season, args.year)
     else:
         run_full_pipeline(args.season, args.year, skip_fetch=args.skip_fetch)
 
