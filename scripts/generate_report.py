@@ -13,6 +13,7 @@ Usage:
 """
 
 import argparse
+import os
 import sys
 from pathlib import Path
 from datetime import datetime
@@ -150,18 +151,14 @@ def _compute_disaster_table(df: pd.DataFrame) -> list[dict]:
 # IMAGE DISCOVERY
 # ============================================================
 
-def _get_season_images(output_dir: Path, prefix: str, year: int) -> dict:
-    """Discover available images for a season prefix.
-
-    Returns dict of key -> relative path (from reports/ to output/).
-    """
-    # For ANNUAL the monthly trend file uses a different name pattern
+def _get_image_keys(prefix: str, year: int) -> dict:
+    """Return the mapping of image key -> filename for a given season prefix."""
     if prefix == 'annual':
         trend_file = f'{prefix}_monthly_trend_{year}.png'
     else:
         trend_file = f'{prefix}_pre_season_trend_{year}.png'
 
-    image_keys = {
+    return {
         'displacements_by_country': f'{prefix}_displacements_by_country.png',
         'displacement_by_type_pie': f'{prefix}_displacement_by_type_pie.png',
         'displacements_by_disaster_type': f'{prefix}_displacements_by_disaster_type.png',
@@ -175,12 +172,32 @@ def _get_season_images(output_dir: Path, prefix: str, year: int) -> dict:
         'trend_across_years': f'{prefix}_trend_across_years.png',
         'monthly_displacement_by_type': f'{prefix}_monthly_displacement_by_type.png',
     }
-    # Relative path from reports/ directory up to output/
-    rel_prefix = '../output/'
+
+
+def _get_season_images(output_dir: Path, prefix: str, year: int, absolute: bool = False) -> dict:
+    """Discover available images for a season prefix.
+
+    Args:
+        absolute: If True, return absolute file:// paths (for PDF rendering).
+                  If False, return relative paths from reports/ (for HTML).
+
+    Returns dict of key -> path string.
+    """
+    image_keys = _get_image_keys(prefix, year)
+
+    if absolute:
+        path_prefix = output_dir.resolve().as_uri() + '/'
+    else:
+        try:
+            rel = os.path.relpath(output_dir, PROJECT_ROOT / 'reports')
+        except ValueError:
+            rel = str(output_dir)
+        path_prefix = rel.replace('\\', '/') + '/'
+
     found = {}
     for key, filename in image_keys.items():
         if (output_dir / filename).exists():
-            found[key] = rel_prefix + filename
+            found[key] = path_prefix + filename
     return found
 
 
@@ -245,8 +262,35 @@ tbody tr:hover { background: #e8f0fe; }
 .season-card .detail { font-size: 13px; color: var(--text-light); margin-top: 8px; }
 .report-footer { background: var(--primary); color: white; padding: 40px; text-align: center; margin-top: 60px; }
 .report-footer p { color: rgba(255,255,255,0.8); font-size: 13px; text-align: center; }
-@media print { .cover { min-height: 100vh; } .figure-container { page-break-inside: avoid; } }
 @media (max-width: 768px) { .cover h1 { font-size: 28px; } .season-grid { grid-template-columns: 1fr; } .key-figures { grid-template-columns: 1fr 1fr; } }
+"""
+
+_PDF_CSS = """\
+@page {
+    size: A4;
+    margin: 2cm 1.8cm;
+    @bottom-center { content: counter(page) " / " counter(pages); font-size: 10px; color: #5d6d7e; }
+}
+@page :first { margin: 0; }
+body { font-size: 13px; line-height: 1.6; }
+.cover { min-height: 100vh; page-break-after: always; margin: -2cm -1.8cm; padding: 60px 40px; }
+.cover h1 { font-size: 34px; }
+.cover h2 { font-size: 18px; }
+.cover-stat .number { font-size: 26px; }
+.container { padding: 0; }
+h2.section-title { font-size: 22px; page-break-after: avoid; }
+h3.sub-title { font-size: 17px; page-break-after: avoid; }
+p { font-size: 13px; }
+.figure-container { page-break-inside: avoid; margin: 20px 0; }
+.figure-container img { max-width: 100%; }
+table { page-break-inside: avoid; font-size: 12px; }
+.key-figures { page-break-inside: avoid; }
+.key-figure .number { font-size: 24px; }
+.season-grid { page-break-inside: avoid; }
+.season-card .stat { font-size: 22px; }
+.callout { page-break-inside: avoid; }
+section { page-break-before: auto; }
+.report-footer { page-break-before: auto; margin-top: 30px; }
 """
 
 
@@ -397,7 +441,7 @@ def _build_cover(season_cfg: dict, year: int, stats: dict) -> str:
     return f'''
     <div class="cover"><div class="cover-content">
         <div class="cover-badge">IGAD Region &bull; Analytical Report</div>
-        <h1>Disaster and Conflict-Induced Internal Displacement in Eastern Africa</h1>
+        <h1>Disaster Impacts in Eastern Africa</h1>
         <h2>{subtitle}</h2>
         <p style="font-size:15px; opacity:0.85; max-width:650px; margin: 0 auto 20px auto; text-align:center;">{description}</p>
         {cover_stats_html}
@@ -614,6 +658,7 @@ def _build_analysis_section(
 
 def _build_seasonal_comparison(
     output_dir: Path, year: int, seasons: list[str],
+    absolute_images: bool = False,
 ) -> str:
     """Build a cross-season comparison section (for ANNUAL reports)."""
     season_data = []
@@ -623,7 +668,7 @@ def _build_seasonal_comparison(
         st = _load_summary_stats(output_dir, prefix)
         if not st:
             continue
-        imgs = _get_season_images(output_dir, prefix, year)
+        imgs = _get_season_images(output_dir, prefix, year, absolute=absolute_images)
         st['_season'] = s
         st['_cfg'] = cfg
         st['_images'] = imgs
@@ -755,7 +800,7 @@ def _build_footer(season_cfg: dict, year: int) -> str:
     return f'''
     <div class="report-footer">
         <p><strong>ICPAC &mdash; Climate Prediction and Applications Centre</strong></p>
-        <p>Disaster and Conflict-Induced Internal Displacement in Eastern Africa &mdash; {season_cfg['name']} {year}</p>
+        <p>Disaster Impacts in Eastern Africa &mdash; {season_cfg['name']} {year}</p>
         <p style="margin-top: 10px; font-size: 12px;">Data sources: {DATA_SOURCE_ORGANIZATIONS}, IGAD-TAC, ReliefWeb</p>
         <p style="margin-top: 5px; font-size: 11px; opacity: 0.6;">Report generated: {now.strftime("%B %Y")}</p>
     </div>'''
@@ -765,47 +810,64 @@ def _build_footer(season_cfg: dict, year: int) -> str:
 # MAIN GENERATOR
 # ============================================================
 
-def generate_report(
-    season: str,
-    year: int,
-    output_dir: Path = None,
-    report_dir: Path = None,
-) -> Path:
+def _validate_output_dir(output_dir: Path, season: str, year: int) -> None:
+    """Check that pipeline outputs exist, raise FileNotFoundError if not."""
+    if not output_dir.exists():
+        print(f"\n  ERROR: Output directory does not exist: {output_dir}")
+        print(f"  You need to run the full pipeline first:")
+        print(f"    python run_analysis.py --season {season} --year {year}")
+        print(f"  Or with cached data:")
+        print(f"    python run_analysis.py --season {season} --year {year} --skip-fetch")
+        raise FileNotFoundError(
+            f"Output directory '{output_dir}' does not exist. "
+            f"Run the full pipeline for {season} {year} first."
+        )
+
+
+def _load_report_data(output_dir: Path, prefix: str, year: int, season: str, absolute_images: bool = False):
+    """Load all report data (stats, dataframe, images, tables).
+
+    Returns (stats, df, images, country_rows, disaster_rows).
     """
-    Generate an HTML displacement analysis report.
-
-    Args:
-        season: Season code (ANNUAL, MAM, JJAS, OND).
-        year: Analysis year.
-        output_dir: Directory containing images and summary files.
-        report_dir: Directory to write the HTML report to.
-
-    Returns:
-        Path to the generated HTML report.
-    """
-    output_dir = output_dir or OUTPUT_DIR
-    report_dir = report_dir or PROJECT_ROOT / 'reports'
-    report_dir.mkdir(parents=True, exist_ok=True)
-
-    season_cfg = get_season_config(season)
-    prefix = season.lower()
-    is_annual = season.upper() == 'ANNUAL'
-
-    print(f"\nGenerating {season} {year} HTML report...")
-
-    # Load data
     stats = _load_summary_stats(output_dir, prefix)
     stats['_year'] = str(year)
     df = _load_summary_excel(output_dir, prefix)
-    images = _get_season_images(output_dir, prefix, year)
+    images = _get_season_images(output_dir, prefix, year, absolute=absolute_images)
     country_rows = _compute_country_table(df)
     disaster_rows = _compute_disaster_table(df)
 
-    print(f"  Stats loaded: {bool(stats.get('total_displaced'))}")
+    has_stats = bool(stats.get('total_displaced'))
+    has_data = len(df) > 0
+    has_images = len(images) > 0
+
+    print(f"  Stats loaded: {has_stats}")
     print(f"  Excel rows: {len(df)}")
     print(f"  Images found: {len(images)} ({', '.join(images.keys())})")
 
-    # Build HTML sections
+    if not has_stats and not has_data and not has_images:
+        print(f"\n  WARNING: No data found for {season} {year} in {output_dir}")
+        print(f"  The report will be empty. Run the full pipeline first:")
+        print(f"    python run_analysis.py --season {season} --year {year}")
+        print(f"  Or with cached data:")
+        print(f"    python run_analysis.py --season {season} --year {year} --skip-fetch")
+        raise FileNotFoundError(
+            f"No analysis data found for {season} {year} in '{output_dir}'. "
+            f"Run the full pipeline first."
+        )
+
+    return stats, df, images, country_rows, disaster_rows
+
+
+def _build_html(
+    season_cfg: dict, year: int, stats: dict, images: dict,
+    country_rows: list, disaster_rows: list,
+    output_dir: Path, css: str, absolute_images: bool = False,
+) -> str:
+    """Assemble the full HTML document."""
+    season = season_cfg['name']
+    is_annual = season.upper() == 'ANNUAL'
+    title_label = "Full Year" if is_annual else season
+
     sections = []
     sections.append(_build_cover(season_cfg, year, stats))
     sections.append('<div class="container">')
@@ -813,9 +875,11 @@ def generate_report(
     sections.append(_build_methodology(season_cfg, year))
     sections.append(_build_analysis_section(stats, country_rows, disaster_rows, images, season_cfg, year))
 
-    # For ANNUAL reports, add seasonal comparison
     if is_annual:
-        seasonal_section = _build_seasonal_comparison(output_dir, year, ['MAM', 'JJAS', 'OND'])
+        seasonal_section = _build_seasonal_comparison(
+            output_dir, year, ['MAM', 'JJAS', 'OND'],
+            absolute_images=absolute_images,
+        )
         if seasonal_section:
             sections.append(seasonal_section)
 
@@ -823,28 +887,100 @@ def generate_report(
     sections.append('</div>')
     sections.append(_build_footer(season_cfg, year))
 
-    # Assemble full HTML
-    title_label = "Full Year" if is_annual else season
-    html = f'''<!DOCTYPE html>
+    return f'''<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Displacement Report - {title_label} {year} - Eastern Africa</title>
-    <style>{_CSS}</style>
+    <title>Disaster Impacts in Eastern Africa - {title_label} {year}</title>
+    <style>{css}</style>
 </head>
 <body>
 {''.join(sections)}
 </body>
 </html>'''
 
-    # Write report - images referenced via relative path to output/
+
+def generate_report(
+    season: str,
+    year: int,
+    output_dir: Path = None,
+    report_dir: Path = None,
+    pdf: bool = False,
+) -> Path:
+    """
+    Generate an HTML (and optionally PDF) displacement analysis report.
+
+    Args:
+        season: Season code (ANNUAL, MAM, JJAS, OND).
+        year: Analysis year.
+        output_dir: Directory containing images and summary files.
+        report_dir: Directory to write the report to.
+        pdf: If True, also generate a PDF version of the report.
+
+    Returns:
+        Path to the generated HTML report.
+    """
+    output_dir = output_dir or (OUTPUT_DIR / str(year))
+    report_dir = report_dir or PROJECT_ROOT / 'reports'
+    report_dir.mkdir(parents=True, exist_ok=True)
+
+    season_cfg = get_season_config(season)
+    prefix = season.lower()
+
+    print(f"\nGenerating {season} {year} HTML report...")
+
+    _validate_output_dir(output_dir, season, year)
+    stats, df, images, country_rows, disaster_rows = _load_report_data(
+        output_dir, prefix, year, season, absolute_images=False
+    )
+
+    # Build and write HTML report (relative image paths)
+    html = _build_html(season_cfg, year, stats, images, country_rows, disaster_rows,
+                       output_dir, css=_CSS, absolute_images=False)
+
     report_filename = f'{prefix}_displacement_report_{year}.html'
     report_path = report_dir / report_filename
     report_path.write_text(html)
-
     print(f"  Report saved: {report_path}")
+
+    # Generate PDF if requested
+    if pdf:
+        pdf_path = _generate_pdf(season, year, output_dir, report_dir, season_cfg, prefix,
+                                 stats, country_rows, disaster_rows)
+        print(f"  PDF saved: {pdf_path}")
+
     return report_path
+
+
+def _generate_pdf(
+    season: str, year: int, output_dir: Path, report_dir: Path,
+    season_cfg: dict, prefix: str,
+    stats: dict, country_rows: list, disaster_rows: list,
+) -> Path:
+    """Generate a PDF report using WeasyPrint with absolute image paths."""
+    try:
+        from weasyprint import HTML as WeasyHTML
+    except ImportError:
+        print("\n  ERROR: WeasyPrint is not installed. Install it with:")
+        print("    pip install weasyprint")
+        raise
+
+    print(f"\n  Generating PDF...")
+
+    # For PDF, use absolute image paths so WeasyPrint can resolve them
+    images_abs = _get_season_images(output_dir, prefix, year, absolute=True)
+
+    # Build HTML with absolute paths and combined CSS (base + PDF overrides)
+    pdf_css = _CSS + "\n" + _PDF_CSS
+    html = _build_html(season_cfg, year, stats, images_abs, country_rows, disaster_rows,
+                       output_dir, css=pdf_css, absolute_images=True)
+
+    pdf_filename = f'{prefix}_displacement_report_{year}.pdf'
+    pdf_path = report_dir / pdf_filename
+    WeasyHTML(string=html).write_pdf(str(pdf_path))
+
+    return pdf_path
 
 
 def main():
@@ -858,9 +994,11 @@ def main():
                         help='Directory containing images/stats (default: output/)')
     parser.add_argument('--report-dir', type=Path, default=None,
                         help='Directory to write report to (default: reports/)')
+    parser.add_argument('--pdf', action='store_true',
+                        help='Also generate a PDF version of the report')
     args = parser.parse_args()
 
-    generate_report(args.season, args.year, args.output_dir, args.report_dir)
+    generate_report(args.season, args.year, args.output_dir, args.report_dir, pdf=args.pdf)
 
 
 if __name__ == '__main__':

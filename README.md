@@ -17,7 +17,8 @@ A data pipeline for analyzing and visualizing disaster-related displacement in E
 │   └── generate_report.py                      # Step 6: HTML report generator
 ├── Input/                                      # Raw IDMC data (idmc_idus.xlsx)
 ├── output/                                     # Generated visualizations & summary Excel
-├── reports/                                    # Generated HTML reports (auto-created)
+│   └── {year}/                                 # Year-specific outputs (images, stats, Excel)
+├── reports/                                    # Generated HTML & PDF reports (auto-created)
 ├── shapefiles/                                 # ICPAC country boundary shapefiles
 ├── icons/                                      # Humanitarian disaster icons (256x256 PNG)
 └── data/                                       # SQLite database (auto-created)
@@ -48,13 +49,14 @@ IDMC API
         [Step 5] Store results in SQLite
                │
                ▼
-        [Step 6] Generate HTML report
+        [Step 6] Generate HTML report (+ optional PDF)
           • Professional cover page
           • Executive summary with key figures
           • Embedded maps, charts & tables
           • Seasonal comparison (ANNUAL mode)
           • Data sources & methodology
           → reports/{season}_displacement_report_{year}.html
+          → reports/{season}_displacement_report_{year}.pdf  (with --pdf)
 ```
 
 ## Quick Start
@@ -63,12 +65,14 @@ IDMC API
 
 ```bash
 python run_analysis.py --season OND --year 2025
+python run_analysis.py --season OND --year 2025 --pdf     # also generate PDF
 ```
 
 ### Full-year analysis
 
 ```bash
 python run_analysis.py --season ANNUAL --year 2024
+python run_analysis.py --season ANNUAL --year 2024 --pdf  # also generate PDF
 ```
 
 ### Skip API fetch (use cached data)
@@ -115,7 +119,7 @@ Pre-season months are used in displacement trend charts to show the build-up bef
 
 ## Output Visualizations
 
-Each pipeline run generates the following in `output/`:
+Each pipeline run generates outputs in `output/{year}/`, keeping each year's data isolated. For example, `python run_analysis.py --season OND --year 2025` writes to `output/2025/`. This ensures reports always reference the correct year's images and statistics.
 
 ### Step 3 — General Analysis
 | File | Description |
@@ -155,13 +159,14 @@ All files prefixed with the season code (e.g., `mam_`, `ond_`, `jjas_`, `annual_
 - Three donut charts: Total Events, Total Displaced, Total Affected
 - Values formatted as K/M (e.g., 1.2M, 287K)
 
-### Step 6 — HTML Report
+### Step 6 — HTML & PDF Report
 
-Each pipeline run generates a self-contained HTML report in `reports/`:
+Each pipeline run generates a self-contained HTML report in `reports/`. Add `--pdf` to also produce a PDF version with the same styling:
 
 | File | Description |
 |------|-------------|
 | `{season}_displacement_report_{year}.html` | Full analytical report with embedded images |
+| `{season}_displacement_report_{year}.pdf` | PDF version (A4, with page numbers) — requires `--pdf` flag |
 
 The report includes:
 - **Cover page** with headline statistics (total displaced, events, countries, conflict share)
@@ -176,6 +181,7 @@ The report generator (`scripts/generate_report.py`) can also be run standalone:
 ```bash
 python scripts/generate_report.py --season ANNUAL --year 2025
 python scripts/generate_report.py --season OND --year 2025
+python scripts/generate_report.py --season OND --year 2025 --pdf   # HTML + PDF
 ```
 
 ## Database
@@ -196,4 +202,7 @@ Somalia, Ethiopia, Kenya, Uganda, Tanzania, Sudan, South Sudan, Rwanda, Burundi,
 
 ```bash
 pip install pandas matplotlib seaborn geopandas numpy requests openpyxl shapely
+
+# Optional: for PDF report generation (--pdf flag)
+pip install weasyprint
 ```
